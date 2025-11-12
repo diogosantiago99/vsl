@@ -50,361 +50,151 @@
         type: 'sandbox-log', 
         payload: evt 
       }, TARGET_ORIGIN);
-      
     } catch (error) {
-      // Falha silenciosa para não quebrar o app
-      console.debug('Lasy bridge error:', error);
+      // Falha silenciosa para evitar loops
     }
   };
 
-  // 1. CAPTURAR ERROS EXISTENTES
-  function captureExistingErrors() {
-    try {
-      // ✅ NOVO: Detectar página de erro "Sandbox Not Found" (E2B 502)
-      if (document.title === 'Sandbox Not Found' || 
-          document.body.innerHTML.includes("wasn't found") ||
-          (document.body.innerHTML.includes("The sandbox") && document.body.innerHTML.includes("wasn't found"))) {
-        publish({
-          source: 'sandbox-status',
-          level: 'error',
-          message: 'Sandbox not found - E2B returned 502',
-          args: ['Sandbox expired or not found'],
-          type: 'sandbox-not-found',
-          errorSource: 'e2b-502'
-        });
-        console.warn('[Lasy Bridge] Sandbox 502 detected');
-        return; // Não processar outros erros se sandbox expirou
-      }
-      
-      // ✅ NOVO: Detectar erro de conexão na porta 3000
-      if (document.title.includes('This site can\'t be reached') ||
-          document.body.innerHTML.includes('ERR_CONNECTION_REFUSED') ||
-          document.body.innerHTML.includes('localhost:3000') ||
-          document.body.innerHTML.includes('refused to connect') ||
-          document.body.innerHTML.includes('This page isn\'t working') ||
-          (window.location.hostname === 'localhost' && document.body.innerHTML.includes('connection'))) {
-        publish({
-          source: 'connection-error',
-          level: 'error',
-          message: 'Projeto não conectado na porta 3000',
-          args: ['Projeto não está rodando na porta 3000'],
-          type: 'port-3000-not-connected',
-          errorSource: 'localhost-connection'
-        });
-        console.warn('[Lasy Bridge] Port 3000 connection error detected');
-        return;
-      }
-      
-      // ✅ NOVO: Detectar erro de BUILD do NextJS (tela vermelha)
-      if (document.body.innerHTML.includes('Application error: a client-side exception has occurred') ||
-          document.body.innerHTML.includes('Unhandled Runtime Error') ||
-          document.body.innerHTML.includes('Error: ') ||
-          document.querySelector('[data-nextjs-toast]') ||
-          document.querySelector('#__next-build-watcher') ||
-          document.body.innerHTML.includes('ChunkLoadError') ||
-          document.body.innerHTML.includes('SyntaxError') ||
-          document.body.innerHTML.includes('Module not found') ||
-          (document.body.style.backgroundColor === 'rgb(255, 85, 85)' || 
-           document.body.style.backgroundColor === 'red' ||
-           document.documentElement.style.backgroundColor === 'rgb(255, 85, 85)')) {
-        publish({
-          source: 'nextjs-build-error',
-          level: 'error',
-          message: 'Erro de BUILD detectado no NextJS',
-          args: ['Erro na compilação/build do projeto NextJS'],
-          type: 'nextjs-build-error',
-          errorSource: 'nextjs-build'
-        });
-        console.warn('[Lasy Bridge] NextJS build error detected');
-      }
-
-      // Capturar erro atual do Next.js (apenas se não for problema de sandbox)
-      const nextData = window.__NEXT_DATA__;
-      if (nextData?.err) {
-        publish({
-          source: 'nextjs-existing',
-          level: 'error',
-          message: nextData.err.message,
-          stack: nextData.err.stack,
-          args: [nextData.err.message],
-          type: 'server-error',
-          errorSource: nextData.err.source || 'server'
-        });
-      }
-      
-      // Capturar problemas de performance (favicon, etc.)
-      if (typeof performance !== 'undefined') {
-        const faviconEntries = performance.getEntries().filter(entry => 
-          entry.name.includes('favicon') || 
-          entry.name.includes('ico') ||
-          (entry.duration === 0 && entry.name.includes('http'))
-        );
-        
-        faviconEntries.forEach(entry => {
+  // Função para inicializar bridge
+  function initializeLasyBridge() {
+    if (bridgeInitialized) return;
+    bridgeInitialized = true;
+    
+    console.debug('[Lasy Bridge] Initializing...');
+    
+    // 1. CHAIN com console methods
+    const consoleMethods = ['log', 'warn', 'error', 'info', 'debug'];
+    consoleMethods.forEach(method => {
+      const existingFunction = console[method];
+      console[method] = function(...args) {
+        try {
           publish({
-            source: 'performance-existing',
-            level: entry.duration === 0 ? 'warn' : 'info',
-            message: `Resource issue: ${entry.name} (duration: ${entry.duration}ms)`,
-            args: [`Resource: ${entry.name}`],
-            type: 'network-performance',
-            url: entry.name,
-            duration: entry.duration
-          });
-        });
-      }
-      
-      // Capturar erros do console que já aconteceram
-      if (nextData?.props?.pageProps?.statusCode) {
-        const statusCode = nextData.props.pageProps.statusCode;
-        if (statusCode >= 400) {
-          publish({
-            source: 'page-existing',
-            level: statusCode >= 500 ? 'error' : 'warn',
-            message: `Page error: HTTP ${statusCode}`,
-            args: [`HTTP ${statusCode}`],
-            type: 'page-error',
-            statusCode: statusCode
-          });
-        }
-      }
-          } catch {
-        // Falha silenciosa
-      }
-  }
-
-  // 2. CHAIN com console.* existentes (aguardar hidratação)
-  function setupConsoleInterception() {
-    ['log', 'info', 'warn', 'error'].forEach((level) => {
-      const existingFunction = console[level];
-      
-      console[level] = (...args) => {
-        // Evitar capturar nossos próprios logs ou logs internos
-        const firstArg = args.length > 0 ? String(args[0]) : '';
-        if (firstArg.includes('Lasy bridge') || 
-            firstArg.includes('Lasy Bridge') ||
-            firstArg.includes('HMR') ||
-            firstArg.includes('[Fast Refresh]') ||
-            firstArg.includes('webpack') ||
-            firstArg.includes('[Lasy')) {
-          return existingFunction.apply(console, args);
-        }
-        
-        // Nossa captura primeiro (apenas se bridge inicializado)
-        if (bridgeInitialized) {
-          try {
-            publish({
-              source: 'client-console',
-              level: level,
-              args: args,
-              message: args.map(arg => String(arg)).join(' '),
-              type: 'console-call',
-              interceptedBy: 'lasy-chain'
-            });
+            source: 'client-console',
+            level: method,
+            args: args.map(arg => {
+              if (typeof arg === 'object' && arg !== null) {
+                try {
+                  return JSON.parse(JSON.stringify(arg));
                 } catch {
-        // Falha silenciosa
-      }
+                  return String(arg);
+                }
+              }
+              return arg;
+            }),
+            message: args.map(arg => String(arg)).join(' '),
+            type: 'console-call',
+            interceptedBy: 'lasy-chain'
+          });
+        } catch {
+          // Falha silenciosa
         }
         
         // Executar função existente
         return existingFunction.apply(console, args);
       };
     });
-  }
 
-  // 3. CHAIN com window.onerror
-  const existingWindowOnError = window.onerror;
-  window.onerror = (message, source, lineno, colno, error) => {
-    try {
-      publish({
-        source: 'global-error',
-        level: 'error',
-        message: String(message),
-        stack: error?.stack,
-        url: source,
-        line: lineno,
-        column: colno,
-        args: [String(message)],
-        type: 'window-onerror',
-        interceptedBy: 'lasy-chain'
-      });
-    } catch {
-      // Falha silenciosa
-    }
-    
-    if (existingWindowOnError) {
-      return existingWindowOnError.call(window, message, source, lineno, colno, error);
-    }
-    return false;
-  };
-
-  // 4. Listener adicional para erros
-  window.addEventListener('error', (e) => {
-    try {
-      publish({
-        source: 'client-error',
-        level: 'error',
-        message: e.message,
-        stack: e.error?.stack,
-        url: e.filename,
-        line: e.lineno,
-        column: e.colno,
-        args: [e.message],
-        type: 'javascript-error',
-        interceptedBy: 'lasy-chain'
-      });
-    } catch {
-      // Falha silenciosa
-    }
-  });
-
-  // 5. CHAIN com unhandledrejection
-  const existingUnhandledRejection = window.onunhandledrejection;
-  window.onunhandledrejection = (e) => {
-    const reason = e.reason;
-    
-    try {
-      publish({
-        source: 'client-promise',
-        level: 'error',
-        message: reason?.message || String(reason),
-        stack: reason?.stack,
-        args: [reason?.message || String(reason)],
-        type: 'promise-rejection',
-        interceptedBy: 'lasy-chain'
-      });
-    } catch {
-      // Falha silenciosa
-    }
-    
-    if (existingUnhandledRejection) {
-      return existingUnhandledRejection.call(window, e);
-    }
-  };
-
-  // 6. Listener adicional para promise rejections
-  window.addEventListener('unhandledrejection', (e) => {
-    const reason = e.reason;
-    try {
-      publish({
-        source: 'client-promise-listener',
-        level: 'error',
-        message: reason?.message || String(reason),
-        stack: reason?.stack,
-        args: [reason?.message || String(reason)],
-        type: 'promise-rejection-listener',
-        interceptedBy: 'lasy-chain'
-      });
-    } catch {
-      // Falha silenciosa
-    }
-  });
-
-  // 7. Interceptar fetch
-  const originalFetch = window.fetch;
-  window.fetch = async (input, init) => {
-    const method = (init?.method || 'GET').toUpperCase();
-    const url = typeof input === 'string' ? input : input.url;
-    
-    try {
-      const response = await originalFetch(input, init);
-      
-      if (!response.ok) {
+    // 2. CHAIN com window.onerror
+    const existingWindowOnError = window.onerror;
+    window.onerror = (message, source, lineno, colno, error) => {
+      try {
         publish({
-          source: 'client-fetch',
-          level: 'network',
-          status: response.status,
-          method: method,
-          url: response.url,
-          message: `${method} ${response.url} ${response.status} ${response.statusText}`,
-          args: [`Network Error: ${method} ${response.url} returned ${response.status}`],
-          type: 'fetch-error'
+          source: 'global-error',
+          level: 'error',
+          message: String(message),
+          stack: error?.stack,
+          url: source,
+          line: lineno,
+          column: colno,
+          args: [String(message)],
+          type: 'window-onerror',
+          interceptedBy: 'lasy-chain'
         });
+      } catch {
+        // Falha silenciosa
       }
       
-      return response;
-    } catch (error) {
-      publish({
-        source: 'client-fetch',
-        level: 'network-error',
-        message: error?.message || 'Network request failed',
-        stack: error?.stack,
-        method: method,
-        url: url,
-        args: [`Network Failed: ${method} ${url} - ${error?.message}`],
-        type: 'fetch-failure'
-      });
-      throw error;
-    }
-  };
-
-  // 8. Interceptar XMLHttpRequest
-  const OriginalXHR = window.XMLHttpRequest;
-  window.XMLHttpRequest = function() {
-    const xhr = new OriginalXHR();
-    const originalOpen = xhr.open.bind(xhr);
-    
-    xhr.open = function(method, url, ...args) {
-      this._lasy_method = method;
-      this._lasy_url = url;
-      return originalOpen(method, url, ...args);
+      if (existingWindowOnError) {
+        return existingWindowOnError.call(window, message, source, lineno, colno, error);
+      }
+      return false;
     };
-    
-    xhr.addEventListener('error', () => {
-      publish({
-        source: 'client-xhr',
-        level: 'network-error',
-        message: 'XMLHttpRequest failed',
-        method: xhr._lasy_method,
-        url: xhr._lasy_url,
-        args: [`XHR Failed: ${xhr._lasy_method} ${xhr._lasy_url}`],
-        type: 'xhr-error'
-      });
-    });
-    
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 400) {
+
+    // 3. Listener adicional para erros
+    window.addEventListener('error', (e) => {
+      try {
         publish({
-          source: 'client-xhr',
-          level: 'network',
-          status: xhr.status,
-          method: xhr._lasy_method,
-          url: xhr._lasy_url,
-          message: `${xhr._lasy_method} ${xhr._lasy_url} ${xhr.status} ${xhr.statusText}`,
-          args: [`Network Error: ${xhr._lasy_method} ${xhr._lasy_url} returned ${xhr.status}`],
-          type: 'xhr-status-error'
+          source: 'client-error',
+          level: 'error',
+          message: e.message,
+          stack: e.error?.stack,
+          url: e.filename,
+          line: e.lineno,
+          column: e.colno,
+          args: [e.message],
+          type: 'javascript-error',
+          interceptedBy: 'lasy-chain'
         });
+      } catch {
+        // Falha silenciosa
       }
     });
-    
-    return xhr;
-  };
 
-  // 9. Função principal de inicialização
-  function initializeLasyBridge() {
-    console.debug('[Lasy Bridge] Starting initialization...');
-    
-    // 1. Capturar erros existentes primeiro
-    captureExistingErrors();
-    
-    // 2. Configurar interceptação de console
-    setupConsoleInterception();
-    
-    // 3. Marcar como inicializado
-    bridgeInitialized = true;
-    
-    // 4. Notificar que a ponte foi estabelecida
+    // 4. CHAIN com unhandledrejection
+    const existingUnhandledRejection = window.onunhandledrejection;
+    window.onunhandledrejection = (e) => {
+      const reason = e.reason;
+      
+      try {
+        publish({
+          source: 'client-promise',
+          level: 'error',
+          message: reason?.message || String(reason),
+          stack: reason?.stack,
+          args: [reason?.message || String(reason)],
+          type: 'promise-rejection',
+          interceptedBy: 'lasy-chain'
+        });
+      } catch {
+        // Falha silenciosa
+      }
+      
+      if (existingUnhandledRejection) {
+        return existingUnhandledRejection.call(window, e);
+      }
+    };
+
+    // 5. Listener adicional para promise rejections
+    window.addEventListener('unhandledrejection', (e) => {
+      const reason = e.reason;
+      try {
+        publish({
+          source: 'client-promise-listener',
+          level: 'error',
+          message: reason?.message || String(reason),
+          stack: reason?.stack,
+          args: [reason?.message || String(reason)],
+          type: 'promise-rejection-listener',
+          interceptedBy: 'lasy-chain'
+        });
+      } catch {
+        // Falha silenciosa
+      }
+    });
+
+    // 6. Log de inicialização
     publish({
-      source: 'client-bridge',
+      source: 'lasy-bridge',
       level: 'info',
       message: 'Lasy console logs conectado',
       args: ['Lasy console logs conectado'],
       type: 'bridge-initialized'
     });
     
-    // 5. Enviar sinal de pronto para parent
+    // 7. Enviar sinal de pronto para parent
     notifyBridgeReady();
     
-    // 6. Enviar sinal adicional com delay para garantir que parent esteja escutando
+    // 8. Enviar sinal adicional com delay para garantir que parent esteja escutando
     setTimeout(() => {
       console.log('[Lasy Bridge] Sending delayed ready signal...');
       notifyBridgeReady();
@@ -499,104 +289,82 @@
         outline-offset: 2px !important;
         cursor: pointer !important;
         position: relative !important;
-        background-color: rgba(59, 130, 246, 0.1) !important;
       }
-      .lasy-highlight::before {
+      .lasy-highlight::after {
         content: attr(data-lasy-selector);
         position: absolute;
-        top: -28px;
+        top: -30px;
         left: 0;
         background: #3b82f6;
         color: white;
         padding: 4px 8px;
         border-radius: 4px;
         font-size: 12px;
-        font-family: 'Courier New', monospace;
-        z-index: 10000;
+        font-family: monospace;
         white-space: nowrap;
+        z-index: 10000;
         pointer-events: none;
-        max-width: 300px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        font-weight: bold;
-      }
-      body {
-        cursor: crosshair !important;
       }
     `;
     document.head.appendChild(selectorStyle);
     
     // Handler para mouseover
-    mouseMoveHandler = function(e) {
-      if (!elementSelectorActive) return;
+    mouseMoveHandler = (e) => {
       e.stopPropagation();
       
-      // Remover highlights anteriores
+      // Remover highlight anterior
       document.querySelectorAll('.lasy-highlight').forEach(el => {
         el.classList.remove('lasy-highlight');
         el.removeAttribute('data-lasy-selector');
       });
       
-      // Skip elementos do próprio seletor
-      if (e.target === selectorStyle || e.target.classList.contains('lasy-highlight')) {
-        return;
-      }
-      
+      // Adicionar highlight ao elemento atual
       const selector = generateSelector(e.target);
       e.target.classList.add('lasy-highlight');
       e.target.setAttribute('data-lasy-selector', selector);
     };
     
     // Handler para click
-    clickHandler = function(e) {
-      if (!elementSelectorActive) return;
-      
+    clickHandler = (e) => {
       e.preventDefault();
       e.stopPropagation();
       
       const selector = generateSelector(e.target);
       const elementInfo = {
-        tag: e.target.tagName.toLowerCase(),
-        text: e.target.textContent?.trim().substring(0, 50) || '',
-        id: e.target.id || '',
-        className: e.target.className || ''
+        selector: selector,
+        tagName: e.target.tagName.toLowerCase(),
+        id: e.target.id || null,
+        className: e.target.className || null,
+        textContent: e.target.textContent?.substring(0, 100) || null,
+        attributes: Array.from(e.target.attributes).reduce((acc, attr) => {
+          acc[attr.name] = attr.value;
+          return acc;
+        }, {})
       };
       
-      console.log('[Lasy Element Selector] Element selected:', selector, elementInfo);
+      // Enviar elemento selecionado para parent
+      window.parent?.postMessage({
+        __lasy: true,
+        type: 'element-selected',
+        payload: elementInfo
+      }, TARGET_ORIGIN);
       
-      // Enviar seleção para parent
-      try {
-        window.parent?.postMessage({
-          __lasy: true,
-          type: 'element-selected',
-          payload: {
-            selector: selector,
-            elementInfo: elementInfo
-          }
-        }, TARGET_ORIGIN);
-        
-        console.log('[Lasy Element Selector] Selection sent to parent');
-      } catch (error) {
-        console.error('[Lasy Element Selector] Error sending selection:', error);
-      }
+      console.log('[Lasy Element Selector] Element selected:', elementInfo);
       
-      // Auto-desativar após seleção
+      // Desativar seletor após seleção
       deactivateElementSelector();
     };
     
-    // Registrar event listeners
+    // Adicionar event listeners
     document.addEventListener('mouseover', mouseMoveHandler, true);
     document.addEventListener('click', clickHandler, true);
     
-    console.log('[Lasy Element Selector] Activated');
+    console.log('[Lasy Element Selector] Activated successfully');
   }
 
   // Desativar seletor de elementos
   function deactivateElementSelector() {
-    if (!elementSelectorActive) {
-      console.log('[Lasy Element Selector] Already inactive');
-      return;
-    }
+    if (!elementSelectorActive) return;
     
     console.log('[Lasy Element Selector] Deactivating...');
     elementSelectorActive = false;
@@ -700,29 +468,38 @@
       document.querySelectorAll('a[href^="/"]').forEach(link => {
         const href = link.getAttribute('href');
         if (href && href !== '/' && !href.includes('#')) {
-          const cleanPath = href.split('?')[0]; // Remove query params
-          if (cleanPath && cleanPath.length > 1) { // Evitar paths vazios
-            newRoutes.add(cleanPath);
-          }
+          // Extrair pathname limpo
+          const pathname = href.split('?')[0];
+          newRoutes.add(pathname);
         }
       });
       
-      // Verificar se encontrou novas rotas
-      const hasNewRoutes = Array.from(newRoutes).some(route => !discoveredRoutes.has(route));
+      // Buscar links do Next.js (Link components)
+      document.querySelectorAll('[href^="/"]').forEach(element => {
+        const href = element.getAttribute('href');
+        if (href && href !== '/' && !href.includes('#')) {
+          const pathname = href.split('?')[0];
+          newRoutes.add(pathname);
+        }
+      });
       
-      if (hasNewRoutes) {
-        // Adicionar novas rotas ao conjunto
-        newRoutes.forEach(route => discoveredRoutes.add(route));
-        
-        // Enviar atualização de rotas descobertas
+      // Adicionar novas rotas descobertas
+      let foundNewRoutes = false;
+      newRoutes.forEach(route => {
+        if (!discoveredRoutes.has(route)) {
+          discoveredRoutes.add(route);
+          foundNewRoutes = true;
+        }
+      });
+      
+      // Notificar parent se encontrou novas rotas
+      if (foundNewRoutes) {
         window.parent?.postMessage({
           __lasy: true,
           type: 'routes-discovered',
           payload: {
-            allRoutes: Array.from(discoveredRoutes),
-            newRoutes: Array.from(newRoutes),
-            source: window.location.pathname,
-            scanMethod: 'dom-links'
+            discoveredRoutes: Array.from(discoveredRoutes),
+            newRoutes: Array.from(newRoutes)
           }
         }, TARGET_ORIGIN);
         
@@ -733,61 +510,27 @@
     }
   }
 
-  // Interceptar History API (navegação SPA)
-  const originalPushState = history.pushState;
-  const originalReplaceState = history.replaceState;
+  // Observer para mudanças de URL (SPA navigation)
+  let lastUrl = location.href;
+  new MutationObserver(() => {
+    const url = location.href;
+    if (url !== lastUrl) {
+      lastUrl = url;
+      notifyUrlChange();
+    }
+  }).observe(document, { subtree: true, childList: true });
 
-  history.pushState = function(...args) {
-    originalPushState.apply(this, args);
-    setTimeout(notifyUrlChange, 10); // Pequeno delay para garantir que a URL foi atualizada
-  };
+  // Listener para popstate (back/forward)
+  window.addEventListener('popstate', notifyUrlChange);
 
-  history.replaceState = function(...args) {
-    originalReplaceState.apply(this, args);
-    setTimeout(notifyUrlChange, 10);
-  };
-
-  // Listener para navegação via botão voltar/avançar
-  window.addEventListener('popstate', () => {
-    setTimeout(notifyUrlChange, 10);
-  });
-
-  // Observer para mudanças no DOM (novos links podem aparecer)
-  const routeObserver = new MutationObserver(() => {
-    clearTimeout(scanTimeout);
-    scanTimeout = setTimeout(scanPageLinks, 1000); // Debounce de 1 segundo
-  });
-
-  // Iniciar observação do DOM
-  if (document.body) {
-    routeObserver.observe(document.body, {
-      childList: true,
-      subtree: true
+  // Scan inicial de links após carregamento
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(scanPageLinks, 1000);
     });
   } else {
-    // Se body não existe ainda, aguardar
-    document.addEventListener('DOMContentLoaded', () => {
-      routeObserver.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
-    });
+    setTimeout(scanPageLinks, 1000);
   }
 
-  // Função para inicializar URL tracking (aguardar bridge estar pronto)
-  function initializeUrlTracking() {
-    if (!bridgeInitialized) {
-      setTimeout(initializeUrlTracking, 100);
-      return;
-    }
-    
-    notifyUrlChange(); // Notificar URL inicial
-    scanPageLinks(); // Scan inicial de links
-    console.log('[Lasy URL Tracker] Initialized and tracking URL changes');
-    console.log('[Lasy Route Discovery] Initialized and scanning for routes');
-  }
-
-  // Aguardar carregamento completo da página
-  setTimeout(initializeUrlTracking, 1000);
-
+  console.log('[Lasy URL Tracker] Initialized');
 })();

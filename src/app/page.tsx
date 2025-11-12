@@ -33,22 +33,15 @@ export default function VSLPage() {
           </p>
         </div>
 
-        {/* Video VSL */}
+        {/* Video VSL - NOVO LINK PANDAVIDEO */}
         <div className="bg-white rounded-3xl shadow-2xl p-8 mb-8">
-          <div className="aspect-video rounded-2xl overflow-hidden shadow-lg mb-6">
-            <script src="https://fast.wistia.com/player.js" async></script>
-            <script src="https://fast.wistia.com/embed/qa5h5y8jzk.js" async type="module"></script>
-            <style dangerouslySetInnerHTML={{
-              __html: `
-                wistia-player[media-id='qa5h5y8jzk']:not(:defined) { 
-                  background: center / contain no-repeat url('https://fast.wistia.com/embed/medias/qa5h5y8jzk/swatch'); 
-                  display: block; 
-                  filter: blur(5px); 
-                  padding-top:56.25%; 
-                }
-              `
-            }} />
-            <wistia-player media-id="qa5h5y8jzk" aspect="1.7777777777777777"></wistia-player>
+          <div className="aspect-video rounded-2xl overflow-hidden shadow-lg mb-6 bg-gradient-to-br from-emerald-100 to-green-100">
+            <iframe
+              src="https://player-vz-26ec749f-e49.tv.pandavideo.com.br/embed/?v=13ddded4-6e5c-4c2b-9e8d-7bdf9ba8d855"
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
           </div>
           
           <div className="text-center">
