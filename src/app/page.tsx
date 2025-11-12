@@ -15,6 +15,13 @@ export default function VSLPage() {
     return () => clearTimeout(timer)
   }, [])
 
+  // Meta Pixel - Page View
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).fbq) {
+      (window as any).fbq('track', 'PageView')
+    }
+  }, [])
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-green-50">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
