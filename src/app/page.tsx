@@ -18,15 +18,13 @@ export default function VSLPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-green-50">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        {/* Headline Principal - MAIS AGRESSIVA E MENOR */}
+        {/* Headline Principal - NOVA HEADLINE COM PALAVRAS IMPACTANTES EM VERMELHO */}
         <div className="text-center mb-8">
           <h1 className="text-2xl md:text-3xl font-black text-gray-900 mb-6 leading-tight">
-            <span className="text-emerald-600">¡EL MÉTODO SECRETO</span><br />
-            QUE ESTÁ HACIENDO RICOS<br />
-            <span className="text-green-700">A MILES DE LATINOS!</span>
+            <span className="text-red-600">¡Esto te lo ocultaron!</span> Personas comunes ganan <span className="text-red-600">US$5.200 mensuales</span> desde casa...
           </h1>
 
-          <p className="text-lg md:text-xl text-gray-700 mb-8 font-medium">
+          <p className="text-sm md:text-base text-gray-700 mb-8 font-medium">
             Si estás <span className="text-red-600 font-bold">CANSADO</span> de trabajar para otros...<br />
             Si quieres <span className="text-emerald-600 font-bold">LIBERTAD FINANCIERA</span> de verdad...<br />
             <span className="text-green-700 font-bold">Este video cambiará tu vida para SIEMPRE.</span>
